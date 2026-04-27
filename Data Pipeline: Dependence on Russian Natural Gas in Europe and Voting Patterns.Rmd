@@ -1,0 +1,331 @@
+---
+title: "Data Pipeline: Dependence on Russian Natural Gas in Europe and Voting Patterns"
+output: html_document
+date: "2026-04-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+### Project Background 
+I wish to study Russian energy dependence and voting patterns in Europe for my final project. Today, Russia plays a substantial role in shaping global energy markets and frequently dominates news headlines regarding natural gas exports and geopolitical actions. As one of the major suppliers of natural gas, Russia is in a unique position to leverage its energy resources as a tool of influence, especially in Europe. I will seek to answer the following questions: does dependence on Russian natural gas influence electoral support for pro-Russia or Euroskeptic political parties in Europe, and does it shape voter sentiment or behavior toward Russia through votes for parties opposing Ukraine aid or EU integration? To explore this empirically, I will assemble a dataset of electoral results from publicly available aggregated datasets and individual country election reporting offices and Russian natural gas imports by country over time from the World Bank data platform World Integrated Trade Solution (WITS). I will then build a model using panel regressions and country and time fixed effects. 
+
+
+### Data Sources and Background
+
+**Gaseous and Liquid Natural Gas** 
+*https://wits.worldbank.org/trade/comtrade/en/country/ALL/year/2024/tradeflow/Imports/partner/RUS/product/271111*
+*https://wits.worldbank.org/trade/comtrade/en/country/ALL/year/2024/tradeflow/Imports/partner/RUS/product/271121*
+
+The World Bank's World Integrated Trade Solution (WITS) reports imports of both liquid and gas form natural gas from 1992 to 2024 for a variety of countries and sources. WITS is a free platform that draws its data from the UN's Comtrade platform. As a result, sharing the raw data is not allowed but including brief summary tables and visualizations for a project is allowed. 
+
+Because country natural gas usage can vary depending on population and size, I create two variables, "ngg_ratio" for gas form and "lng_ratio" for liquid form. They are calculated by taking the ratio of natural gas imported from Russia over the amount of natural gas imported from all countries for each country, year, and form.
+
+**CHES**  
+*https://www.chesdata.eu/ches-europe*
+
+The Chapel Hill Expert Survey collects data on ideological and political positioning of parties and relationships between parties and international entities across the world. I use CHES data to create two variables: "euroskep" and "envs"
+
+I created "euroskep" to represent the overall voteshare for euroskeptic parties for each country. The variable is calculated using the CHES “EU_POSITION” variable. “EU POSITION” ranges from 1 to 7 representing the following:
+	1 = Strongly opposed
+	2 = Opposed
+	3 = Somewhat opposed
+	4 = Neutral
+	5 = Somewhat in favor
+	6 = In favor
+	7 = Strongly in favor. 
+Countries with a score of 3 or less were coded as euroskeptic and given a binary value, 1 for true, and 0 for false. The final euroskep variable is calculated by finding the total vote share attributed to parties flagged as euroskeptic for each country and year combination. Values can range from 0 to 1.
+
+I created "env" to represent a party's priority of enviornmental sustainability versus economic growth. The "ENVIONMENT" variable in the CHES data trend file ranges from 0, where a party "strongly supports environmental protection even at the cost of economic growth" to 10 where a party "strongly supports economic growth even at the cost of environmental protection". Parties with a 4 or lower “ENVIRONMENT” score are coded as 1 meaning they support the environment over the economy and all other values are coded as 0 since they are either neutral or value the opposite. The final “env” variable is created by aggregating the total voteshare of parties who support the environment over economic growth. Values can range from 0 to 1.
+
+**Eurostat**  
+*https://ec.europa.eu/eurostat/databrowser/view/nrg_ind_id/default/table?lang=en*
+
+Eurostat provides data on energy import dependency by country and year. Data is in percent form which represents the total share of energy needs met by foreign imports calculated by the following equation: Energy dependence = (imports – exports) / gross available energy. Negative scores represent countries that are net exporters and a score of over 100% means energy has been stored. Energy is counted as domestic if it is produced in the same country even if input materials are imported from other countries. 
+
+**Our World In Data**  
+*https://ourworldindata.org/grapher/gdp-per-capita-worldbank*
+
+Data on GDP per capita is sourced from Our World in Data and it is calculated by taking the GDP and dividing by population. They have aggregated values from the World Bank's World Development Indicators using international purchasing power parity reported in constant 2021 USD prices to adjust for inflation. Observations are widely available for every country and year.
+
+**Dummy Variables**
+
+Georgia (post2008)
+“post2008” is a dummy variable that indicates if the year is after the August 2008 Russian invasion of Georgia. Years before and including 2008 are “0” and years after 2008 are ”1”. 
+
+Crimea (post2014)
+“post2014” is a dummy variable that indicates if the year is after the March 2014 Russian annexation of Crimea. Years before and including 2014 are “0” and years after 2014 are ”1”. 
+
+Ukraine (post2022)
+“post2022” is a dummy variable that indicates if the year is after the February 2022 Russian invasion of Ukraine. Years before and including 2022 are “0” and years after 2022 are ”1”. 
+
+USSR Alignment (postcomm)
+“postcomm” is a dummy variable that indicates if a country was aligned with the Soviet Union following World War II. Countries that were included in the USSR or were Soviet satellite states are coded with “1”. All other countries are coded with “0”.
+
+
+### Classifications
+
+Code to create a classifications file to help with joining and organizing countries. Countries can be changed according to subset interest.
+
+```{r}
+ches_ids <- c(
+  "Belgium"        = 1,  "Denmark"        = 2,  "Germany"        = 3,
+  "Greece"         = 4,  "Spain"          = 5,  "France"         = 6,
+  "Ireland"        = 7,  "Italy"          = 8,  "Luxembourg"     = 9,
+  "Netherlands"    = 10, "United Kingdom" = 11, "Portugal"       = 12,
+  "Austria"        = 13, "Finland"        = 14, "Sweden"         = 16,
+  "Bulgaria"       = 20, "Czech Republic" = 21, "Estonia"        = 22,
+  "Hungary"        = 23, "Latvia"         = 24, "Lithuania"      = 25,
+  "Poland"         = 26, "Romania"        = 27, "Slovak Republic|Slovakia"= 28,
+  "Slovenia"       = 29, "Croatia"        = 31, "Malta"          = 37,
+  "Luxembourg"     = 38, "Cyprus"         = 40)
+
+class <- data.frame(
+  country = c(
+    "Romania", "Hungary", "Serbia, FR(Serbia/Montenegro)", "Croatia",
+    "Switzerland", "France", "Slovak Republic", "Austria", "Poland",
+    "Lithuania", "Latvia", "Slovenia", "Czech Republic", "Ukraine",
+    "Greece", "North Macedonia", "Belarus", "Finland", "Moldova",
+    "Estonia", "Bosnia and Herzegovina", "Bulgaria", "Italy", "Sweden",
+    "Belgium", "Norway", "United Kingdom", "Spain", "Portugal", "Netherlands",
+    "Denmark", "Germany", "Ireland", "Luxembourg", "Malta", "Cyprus"
+  ),
+  iso2 = c(
+    "RO", "HU", "RS", "HR",
+    "CH", "FR", "SK", "AT", "PL",
+    "LT", "LV", "SI", "CZ", "UA",
+    "GR", "MK", "BY", "FI", "MD",
+    "EE", "BA", "BG", "IT", "SE",
+    "BE", "NO", "GB", "ES", "PT", "NL",
+    "DK", "DE", "IE", "LU", "MT", "CY"
+  ),
+  iso3 = c(
+    "ROU", "HUN", "SRB", "HRV",
+    "CHE", "FRA", "SVK", "AUT", "POL",
+    "LTU", "LVA", "SVN", "CZE", "UKR",
+    "GRC", "MKD", "BLR", "FIN", "MDA",
+    "EST", "BIH", "BGR", "ITA", "SWE",
+    "BEL", "NOR", "GBR", "ESP", "PRT", "NLD",
+    "DNK", "DEU", "IRL", "LUX", "MLT", "CYP"
+  ),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    CHES = ches_ids[country],
+    former_ussr = as.integer(country %in% c(
+      "Estonia", "Latvia", "Lithuania", "Ukraine", "Belarus", "Moldova"
+    )),
+    soviet_satellite = as.integer(country %in% c(
+      "Romania", "Hungary", "Bulgaria", "Poland", "Czech Republic", "Slovak Republic"
+    )),
+    subset = as.integer(country %in% c(
+      "Bulgaria", "Czech Republic", "Estonia", "Greece",
+      "Hungary", "Italy", "Latvia", "Lithuania", "Romania", "Slovak Republic", "Slovakia", "Slovenia"
+    ))
+  )
+
+```
+
+### Scrape WITS data
+
+WITS data is organized by year and item. That means that each year of Russian imported gas data has two sheets, one for gas and one for liquid. Overall aggregates also have two sheets per year. Instead of downloading 128 sheets (4 per year from 1992 to 2024) it is much quicker and easier to web scrape and merge the data in R. 
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(httr)
+
+# Product codes for natural gas
+# 271111 = natural gas, liquefied (LNG)
+# 271121 = natural gas in gaseous state
+
+scrape_wits <- function(year, product_code, partner = "WLD") {
+  url <- paste0(
+    "https://wits.worldbank.org/trade/comtrade/en/country/ALL/year/",
+    year,
+    "/tradeflow/Imports/partner/",
+    partner,
+    "/product/",
+    product_code
+  )
+  
+  message("Scraping: ", year, " | product: ", product_code, " | partner: ", partner)
+  Sys.sleep(2)
+  
+  tryCatch({
+    page <- GET(url,
+                add_headers(`User-Agent` = "Mozilla/5.0 (compatible; academic research)"),
+                timeout(30))
+    
+    if (status_code(page) != 200) {
+      message("  Failed with status: ", status_code(page))
+      return(NULL)
+    }
+    
+    txt <- httr::content(page, type = "text", encoding = "UTF-8")
+    html <- rvest::read_html(txt)
+    tables <- html %>% html_nodes("table") %>% html_table(fill = TRUE)
+    
+    if (length(tables) == 0) {
+      message("  No table found for ", year)
+      return(NULL)
+    }
+    
+    df <- tables[[which.max(sapply(tables, nrow))]]
+    df$year        <- year
+    df$product_code <- product_code
+    df$partner     <- partner
+    return(df)
+    
+  }, error = function(e) {
+    message("  Error for year ", year, ": ", e$message)
+    return(NULL)
+  })
+}
+
+clean_wits_raw <- function(raw_df, product_code) {
+  raw_df %>%
+    # Promote first row to column names
+    setNames(as.character(slice(., 1))) %>%
+    slice(-1) %>%
+    janitor::clean_names() %>%
+    filter(!is.na(reporter)) %>%
+    filter(reporter != "reporter") %>%
+    select(-any_of(as.character(product_code)))
+}
+
+#Scraper
+years       <- 1992:2024
+product_lng <- 271111   # natural gas, liquefied (LNG)
+product_gas <- 271121   # natural gas in gaseous state
+
+lng_wld_raw <- map_dfr(years, ~ scrape_wits(.x, product_lng, partner = "WLD"))
+lng_rus_raw <- map_dfr(years, ~ scrape_wits(.x, product_lng, partner = "RUS"))
+gas_wld_raw <- map_dfr(years, ~ scrape_wits(.x, product_gas, partner = "WLD"))
+gas_rus_raw <- map_dfr(years, ~ scrape_wits(.x, product_gas, partner = "RUS"))
+
+#Clean
+wits_lng_wld <- clean_wits_raw(lng_wld_raw, product_lng)
+wits_lng_rus <- clean_wits_raw(lng_rus_raw, product_lng)
+wits_gas_wld <- clean_wits_raw(gas_wld_raw, product_gas)
+wits_gas_rus <- clean_wits_raw(gas_rus_raw, product_gas)
+
+
+#Calculate Ratios
+lng_ratio <- wits_lng_wld %>%
+  rename(qty_wld = quantity) %>%
+  select(reporter, year, qty_wld) %>%
+  left_join(
+    wits_lng_rus %>% select(reporter, year, qty_rus = quantity),
+    by = c("reporter", "year")
+  ) %>%
+  mutate(
+    qty_wld   = as.numeric(gsub(",", "", qty_wld)),
+    qty_rus   = as.numeric(gsub(",", "", qty_rus)),
+    lng_ratio = qty_rus / qty_wld
+  )
+
+ngg_ratio <- wits_gas_wld %>%
+  rename(qty_wld = quantity) %>%
+  select(reporter, year, qty_wld) %>%
+  left_join(
+    wits_gas_rus %>% select(reporter, year, qty_rus = quantity),
+    by = c("reporter", "year")
+  ) %>%
+  mutate(
+    qty_wld   = as.numeric(gsub(",", "", qty_wld)),
+    qty_rus   = as.numeric(gsub(",", "", qty_rus)),
+    ngg_ratio = qty_rus / qty_wld
+  )
+
+```
+
+## CHES Data
+```{r}
+ches <- read_csv("/Users/kayleywatson/Desktop/Econ 435/Raw Data/CHES Dataset Means V2 - 1999-2024.csv") %>%
+  rename("CHES" = country) %>%
+  left_join(class) %>%
+  select(country, CHES, iso2, iso3, former_ussr, soviet_satellite, subset,
+         year, electionyear, party, family, govt, vote, seat,
+         eu_position, eu_salience, eu_dissent, galtan, lrgen, lrecon, eu_russia,
+         nationalism, russian_interference, environment)
+
+ches_data <- ches %>%
+  select(country, CHES, iso2, iso3, former_ussr, soviet_satellite, subset,
+         year, electionyear, party, family, govt, vote, seat,
+         eu_position, environment) %>%
+  mutate(euroskeptic = eu_position <= 3,
+         envs  = environment <= 4) %>%
+  filter(!is.na(electionyear), vote > 0.5) %>%
+  group_by(country, CHES, iso2, iso3, former_ussr, soviet_satellite, subset, electionyear) %>%
+  summarise(euroskeptic_share = sum(vote[euroskeptic], na.rm = TRUE) / sum(vote, na.rm = TRUE),
+            envs_share  = sum(vote[envs], na.rm = TRUE) / sum(vote, na.rm = TRUE),
+            .groups = "drop") %>%
+  filter(!is.na(euroskeptic_share)) %>%
+  filter(!is.na(iso3))
+```
+
+
+## OWID GDPPC
+```{r}
+gdppc <- read_csv("/Users/kayleywatson/Downloads/gdp-per-capita-worldbank/gdp-per-capita-worldbank.csv") %>%
+  rename(country = Entity, year = Year, code = Code, gdppc = `GDP per capita`, 
+         region = `World region according to OWID`) %>%
+  mutate(country = recode(country, "Czechia" = "Czech Republic"))
+```
+
+
+## Import Dependency -- Eurostat
+```{r}
+imp_dep <- read_csv('/Users/kayleywatson/Desktop/Econ 435/nrg_ind_id__custom_20841109_linear.csv') %>%
+  select(geo, TIME_PERIOD, OBS_VALUE) %>%
+  rename(country = geo) %>%
+  rename(year = TIME_PERIOD) %>%
+  rename(imp_dep = OBS_VALUE) %>%
+  mutate(country = recode(country, "Czechia" = "Czech Republic"))
+```
+
+## Merge Set
+```{r}
+country_years <- expand_grid(
+  country = class$country,
+  electionyear = 1992:2024
+)
+
+panel <- country_years %>%
+  left_join(class, by = "country") %>%
+  left_join(ches_data %>% select(country, electionyear, euroskeptic_share, envs_share),
+            by = c("country", "electionyear")) %>%
+  left_join(lng_ratio %>% filter(year != "Year") %>% rename(country = reporter, qty_lng_wld = qty_wld, qty_lng_rus = qty_rus) %>% mutate(year = as.integer(year)),
+            by = c("country", "electionyear" = "year")) %>%
+  left_join(ngg_ratio %>% filter(year != "Year") %>% rename(country = reporter, qty_ngg_wld = qty_wld, qty_ngg_rus = qty_rus) %>% mutate(year = as.integer(year)),
+            by = c("country", "electionyear" = "year")) %>%
+  left_join(gdppc %>% select(code, year, gdppc), by = c("iso3" = "code", "electionyear" = "year")) %>%
+  left_join(imp_dep, by = c("country", "electionyear" = "year")) %>%
+  mutate(post2008 = as.integer(electionyear > 2008),
+         post2014 = as.integer(electionyear > 2014),
+         post2022 = as.integer(electionyear > 2022),
+         postcomm = as.integer(former_ussr == 1 | soviet_satellite == 1)) %>%
+  mutate(across(c(lng_ratio, ngg_ratio), ~ ifelse(is.nan(.), 0, .)))
+```
+
+## Final Data
+```{r}
+data <- panel %>%
+  filter(CHES != "NA") %>%
+  select(country, electionyear, euroskeptic_share, envs_share, qty_ngg_rus, qty_ngg_wld, ngg_ratio, qty_lng_rus, qty_lng_wld, lng_ratio, gdppc, imp_dep, post2008, post2014, post2022, postcomm)
+
+write_dta(data, "WITS_full.dta")
+```
+
+
+
+
+
+
+
+
+
+
